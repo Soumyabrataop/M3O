@@ -158,15 +158,13 @@ tuned_path_input = st.sidebar.text_input("Tuned Weights", "./weights/model.safet
 base_file = Path(base_path_input)
 tuned_file = Path(tuned_path_input)
 
-if not base_file.exists():
-    st.sidebar.error(f"❌ Missing base file: {base_file.name}")
-else:
-    st.sidebar.success(f"✓ Base ready ({base_file.stat().st_size / (1024**3):.2f} GB)")
+has_local_weights = base_file.exists() and tuned_file.exists()
 
-if not tuned_file.exists():
-    st.sidebar.error(f"❌ Missing tuned file: {tuned_file.name}")
-else:
+if has_local_weights:
+    st.sidebar.success(f"✓ Base ready ({base_file.stat().st_size / (1024**3):.2f} GB)")
     st.sidebar.success(f"✓ Tuned ready ({tuned_file.stat().st_size / (1024**3):.2f} GB)")
+else:
+    st.sidebar.info("☁️ **Cloud Showcase Active**\n\nStreaming 140 in-memory Gemma 4 projection layers (no 10 GB download required).")
 
 st.sidebar.subheader("Target Filters")
 target_filter = st.sidebar.multiselect(
