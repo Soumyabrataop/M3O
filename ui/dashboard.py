@@ -25,6 +25,15 @@ try:
 except ImportError:
     pass
 
+# Bridge Streamlit Cloud secrets into os.environ if present
+try:
+    if hasattr(st, "secrets"):
+        for k, v in st.secrets.items():
+            if isinstance(v, str):
+                os.environ[k] = v
+except Exception:
+    pass
+
 from engine.merger import (
     WeightSurgeryEngine,
     STATUS_STABLE,
