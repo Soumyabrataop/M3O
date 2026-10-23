@@ -111,29 +111,36 @@ st.sidebar.title("⚡ M3O Controls")
 st.sidebar.markdown("**Mechanistic Model Surgery & Optimizer**")
 
 st.sidebar.subheader("Task Vector Scaling (λ / Alpha)")
-lambda_preset = st.sidebar.selectbox(
-    "Quick Presets",
-    ["Custom", "Conservative (0.3)", "Balanced (0.5)", "Identity (1.0)", "Aggressive (1.8)", "Stress Test (2.5)"],
-    index=2,
+collapse_mode = st.sidebar.toggle(
+    "🚨 Collapse Stress Test Mode",
+    value=False,
+    help="Scales task vector perturbation to demonstrate DEGRADED and CRITICAL layer collapse across the network depth.",
 )
 
-preset_map = {
-    "Conservative (0.3)": 0.3,
-    "Balanced (0.5)": 0.5,
-    "Identity (1.0)": 1.0,
-    "Aggressive (1.8)": 1.8,
-    "Stress Test (2.5)": 2.5,
-}
-
-initial_lambda = preset_map.get(lambda_preset, 0.5)
-lambda_val = st.sidebar.slider(
-    "λ (Scaling Factor)",
-    min_value=-1.0,
-    max_value=3.0,
-    value=float(initial_lambda),
-    step=0.05,
-    help="Coefficient multiplying the task vector τ = W_tuned - W_base. λ=1.0 is full fine-tuned; λ=0.5 is halfway merge.",
-)
+if collapse_mode:
+    st.sidebar.error("⚠️ Stress Test Active (λ = 12,000.0). Demonstrating DEGRADED and CRITICAL layer collapse.")
+    lambda_val = 12000.0
+else:
+    lambda_preset = st.sidebar.selectbox(
+        "Quick Presets",
+        ["Balanced (0.5)", "Conservative (0.3)", "Identity (1.0)", "Aggressive (1.8)", "Custom"],
+        index=0,
+    )
+    preset_map = {
+        "Conservative (0.3)": 0.3,
+        "Balanced (0.5)": 0.5,
+        "Identity (1.0)": 1.0,
+        "Aggressive (1.8)": 1.8,
+    }
+    initial_lambda = preset_map.get(lambda_preset, 0.5)
+    lambda_val = st.sidebar.slider(
+        "λ (Scaling Factor)",
+        min_value=-1.0,
+        max_value=3.0,
+        value=float(initial_lambda),
+        step=0.05,
+        help="Coefficient multiplying the task vector τ = W_tuned - W_base. λ=1.0 is full fine-tuned; λ=0.5 is halfway merge.",
+    )
 
 st.sidebar.subheader("Weights Checkpoints")
 base_path_input = st.sidebar.text_input("Base Reference Weights", "./weights/gemma4_base.safetensors")
@@ -301,7 +308,7 @@ if st.session_state.last_results is not None:
         "📋 Layer Telemetry Explorer",
         "🛰️ Dual Telemetry Stream",
         "🔬 Mechanistic Inspector",
-        "🧠 Gemma 4 Diagnostician (gemma-4-31b-it)",
+        "🧠 Gemma 4 Diagnostician (gemma-4-26b-a4b-it)",
     ])
 
     with tab_analytics:
