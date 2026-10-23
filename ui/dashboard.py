@@ -241,7 +241,9 @@ if execute_btn:
                 "total_layers": len(results_list),
                 "flushed_sf": flushed_sf,
             }
-            st.session_state.telemetry_records = list(telemetry.mongo_mock_records)
+            st.session_state.telemetry_records = list(telemetry.logged_records)
+            st.session_state.is_mongo_active = telemetry.is_mongo_active
+            st.session_state.is_snowflake_active = telemetry.is_snowflake_active
             telemetry.close()
 
             st.success(f"Successfully processed {len(results_list)} layers in {t_elapsed:.2f}s ({len(results_list)/t_elapsed:.2f} layers/sec)!")
@@ -384,6 +386,8 @@ if st.session_state.last_results is not None:
 
         with t_col1:
             st.markdown("#### Hot Path: MongoDB Atlas Ingestion")
+            mongo_status_label = "🟢 ONLINE (`cluster0.y0jie2q.mongodb.net`)" if st.session_state.get("is_mongo_active", True) else "🟡 Mock Mode"
+            st.caption(f"Cluster Status: **{mongo_status_label}** • Collection: `m3o_engine.layer_metrics`")
             st.markdown(f"**Logged Documents:** {len(st.session_state.telemetry_records)} records")
             if st.session_state.telemetry_records:
                 st.json(st.session_state.telemetry_records[:3])
@@ -391,7 +395,8 @@ if st.session_state.last_results is not None:
 
         with t_col2:
             st.markdown("#### Cold Path: Snowflake Micro-Batches")
-            st.markdown(f"**Target Table:** `M3O_ENGINE.TELEMETRY.LAYER_METRICS`")
+            sf_status_label = "🟢 ONLINE (`SNOWFLAKE_LEARNING_WH`)" if st.session_state.get("is_snowflake_active", True) else "🟡 Mock Mode"
+            st.caption(f"Warehouse Status: **{sf_status_label}** • Table: `M3O_ENGINE.TELEMETRY.LAYER_METRICS`")
             st.markdown(f"**Total Records Flushed:** {summary['flushed_sf']} rows")
             st.code(
                 f"""INSERT INTO M3O_ENGINE.TELEMETRY.LAYER_METRICS (

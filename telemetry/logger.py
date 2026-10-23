@@ -82,6 +82,7 @@ class TelemetryLogger:
         self.snowflake_buffer: List[LayerMetricRecord] = []
         self.mongo_mock_records: List[Dict[str, Any]] = []
         self.snowflake_flushed_mock: List[Dict[str, Any]] = []
+        self.logged_records: List[Dict[str, Any]] = []
 
         # ---------------------------------------------------------
         # 1. Hot Path: MongoDB Atlas Setup
@@ -217,6 +218,7 @@ class TelemetryLogger:
 
         # Hot Path: MongoDB Atlas
         payload = record.to_dict()
+        self.logged_records.append(payload)
         if self.is_mongo_active and self.mongo_col is not None:
             try:
                 self.mongo_col.insert_one(payload)
