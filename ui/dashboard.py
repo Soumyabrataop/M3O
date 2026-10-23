@@ -282,21 +282,21 @@ if execute_btn:
         t_elapsed = time.perf_counter() - t_start
         flushed_sf = telemetry.flush_to_snowflake()
 
-            # Store in session state
-            st.session_state.last_results = results_list
-            st.session_state.last_summary = {
-                "lambda_val": lambda_val,
-                "elapsed": t_elapsed,
-                "throughput": len(results_list) / t_elapsed if t_elapsed > 0 else 0,
-                "total_layers": len(results_list),
-                "flushed_sf": flushed_sf,
-            }
-            st.session_state.telemetry_records = list(telemetry.logged_records)
-            st.session_state.is_mongo_active = telemetry.is_mongo_active
-            st.session_state.is_snowflake_active = telemetry.is_snowflake_active
-            telemetry.close()
+        # Store in session state
+        st.session_state.last_results = results_list
+        st.session_state.last_summary = {
+            "lambda_val": lambda_val,
+            "elapsed": t_elapsed,
+            "throughput": len(results_list) / t_elapsed if t_elapsed > 0 else 0,
+            "total_layers": len(results_list),
+            "flushed_sf": flushed_sf,
+        }
+        st.session_state.telemetry_records = list(telemetry.logged_records)
+        st.session_state.is_mongo_active = telemetry.is_mongo_active
+        st.session_state.is_snowflake_active = telemetry.is_snowflake_active
+        telemetry.close()
 
-            st.success(f"Successfully processed {len(results_list)} layers in {t_elapsed:.2f}s ({len(results_list)/t_elapsed:.2f} layers/sec)!")
+        st.success(f"Successfully processed {len(results_list)} layers in {t_elapsed:.2f}s ({len(results_list)/t_elapsed:.2f} layers/sec)!")
 
 
 # -----------------------------------------------------------------------------
