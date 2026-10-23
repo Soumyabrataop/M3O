@@ -1,0 +1,8 @@
+numpy
+safetensors
+pymongo
+snowflake-connector-python
+rich
+streamlit
+ml_dtypes
+python-dotenv
