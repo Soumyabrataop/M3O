@@ -30,6 +30,7 @@ from rich.table import Table
 from rich.live import Live
 from rich.panel import Panel
 from rich.text import Text
+from rich.markdown import Markdown
 from rich import box
 
 # Ensure project root is in sys.path
@@ -73,10 +74,10 @@ def create_cockpit_table(alpha: float) -> Table:
         header_style="bold cyan",
         expand=True,
     )
-    table.add_column("Target Layer", style="cyan", no_wrap=True)
-    table.add_column("Frobenius Δ", justify="right", style="white")
-    table.add_column("Cosine Sim", justify="right", style="white")
-    table.add_column("Integrity Status", justify="center")
+    table.add_column("Target Layer", style="cyan", ratio=4, overflow="ellipsis")
+    table.add_column("Frobenius Δ", justify="right", style="white", min_width=13, no_wrap=True)
+    table.add_column("Cosine Sim", justify="right", style="white", min_width=11, no_wrap=True)
+    table.add_column("Integrity Status", justify="center", min_width=18, no_wrap=True)
     return table
 
 
@@ -87,10 +88,15 @@ def run_cockpit(
     tuned: str = "./weights/model.safetensors",
     limit: Optional[int] = None,
     output: Optional[str] = None,
+    stress_test: bool = False,
+    gemini_key: Optional[str] = None,
 ) -> int:
     """
     Execute streaming surgery pipeline with live terminal cockpit rendering.
     """
+    # If stress test requested, scale alpha to simulate aggressive task vector perturbation
+    if stress_test:
+        alpha = 12000.0
     base_file = Path(base)
     tuned_file = Path(tuned)
 
@@ -215,6 +221,23 @@ def run_cockpit(
 
     console.print()
     console.print(Panel(summary_table, title="[bold green]Executive Surgery Summary[/bold green]", border_style="green", expand=False))
+
+    # Google Gemini / Gemma 4 AI Diagnostician
+    from telemetry.gemini_diagnostics import diagnose_model_surgery_with_gemini
+    console.print("\n[bold cyan][*][/bold cyan] Invoking Gemma 4 AI Diagnostician ([dim]gemma-4-26b-a4b-it via Gemini API[/dim])...")
+    metrics_payload = {
+        "alpha": alpha,
+        "total_layers": total_layers,
+        "mean_cos_sim": mean_cos,
+        "min_cos_sim": min_cos,
+        "mean_frob_drift": mean_frob,
+        "stable_count": stable_count,
+        "degraded_count": degraded_count,
+        "critical_count": critical_count,
+    }
+    report_text = diagnose_model_surgery_with_gemini(metrics_payload, api_key=gemini_key)
+    console.print(Panel(Markdown(report_text), title="[bold cyan]🧠 Gemma 4 (gemma-4-26b-a4b-it) Mechanistic Assessment[/bold cyan]", border_style="cyan", expand=False))
+
     return 0
 
 
@@ -228,6 +251,17 @@ def main():
         type=float,
         default=0.7,
         help="Task vector scaling coefficient (default: 0.7)",
+    )
+    parser.add_argument(
+        "--stress-test",
+        action="store_true",
+        help="Simulate severe task vector drift to demonstrate DEGRADED and CRITICAL layer collapse",
+    )
+    parser.add_argument(
+        "--gemini-key",
+        type=str,
+        default=None,
+        help="Google Gemini API key for gemma-4-31b-it diagnostics (or set in .env)",
     )
     parser.add_argument(
         "--mongo",
@@ -269,6 +303,8 @@ def main():
             tuned=args.tuned,
             limit=args.limit,
             output=args.output,
+            stress_test=args.stress_test,
+            gemini_key=args.gemini_key,
         )
     )
 

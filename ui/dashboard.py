@@ -293,11 +293,12 @@ if st.session_state.last_results is not None:
     st.markdown("---")
 
     # 2. Interactive Analysis Tabs
-    tab_analytics, tab_data, tab_telemetry, tab_inspector = st.tabs([
+    tab_analytics, tab_data, tab_telemetry, tab_inspector, tab_gemma = st.tabs([
         "📈 Drift & Collapse Analytics",
         "📋 Layer Telemetry Explorer",
         "🛰️ Dual Telemetry Stream",
         "🔬 Mechanistic Inspector",
+        "🧠 Gemma 4 Diagnostician (gemma-4-31b-it)",
     ])
 
     with tab_analytics:
@@ -413,6 +414,37 @@ if st.session_state.last_results is not None:
         with i_col3:
             st.metric("Layer Health", layer_row["Status"])
             st.metric("Task Vector Scaling λ", f"{layer_row['Lambda']}")
+
+    with tab_gemma:
+        st.subheader("Gemma 4 (`gemma-4-26b-a4b-it`) Mechanistic Diagnostician")
+        st.markdown(
+            "Calls Google's **`gemma-4-26b-a4b-it`** model directly via the Gemini API "
+            "to perform an automated mechanistic interpretability assessment of the surgery pass."
+        )
+
+        api_key_input = st.text_input(
+            "Gemini API Key",
+            type="password",
+            value=os.getenv("GEMINI_API_KEY", ""),
+            placeholder="AQ... or AIzaSy... (pre-filled from .env)",
+        )
+
+        metrics_payload = {
+            "alpha": summary["lambda_val"],
+            "total_layers": summary["total_layers"],
+            "mean_cos_sim": mean_cos,
+            "min_cos_sim": min_cos,
+            "mean_frob_drift": mean_frob,
+            "stable_count": (df["Status"] == "STABLE").sum(),
+            "degraded_count": (df["Status"] == "DEGRADED").sum(),
+            "critical_count": (df["Status"] == "CRITICAL").sum(),
+        }
+
+        if st.button("🤖 Run gemma-4-26b-a4b-it Diagnosis", type="primary"):
+            from telemetry.gemini_diagnostics import diagnose_model_surgery_with_gemini
+            with st.spinner("Invoking gemma-4-26b-a4b-it via Gemini API..."):
+                report = diagnose_model_surgery_with_gemini(metrics_payload, api_key=api_key_input)
+                st.markdown(report)
 
 else:
     st.info("👈 Click **Execute Weight Surgery** in the sidebar to stream layers, compute task vectors, and visualize model collapse heuristics.")
