@@ -3,14 +3,21 @@ __pycache__/
 *.py[cod]
 *$py.class
 
-# Large weight binaries (do not commit to git)
-weights/*.safetensors
+# Large weight binaries and models (do not commit to git)
+weights/
+*.safetensors
+*.bin
+*.pt
+*.pth
+*.onnx
+*.ckpt
 
 # Environment & IDE
 .venv/
 env/
 venv/
-.env
+.env*
+!.env.example
 .idea/
 .vscode/
 
