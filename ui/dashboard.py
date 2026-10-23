@@ -205,13 +205,17 @@ if "telemetry_records" not in st.session_state:
 
 # Execution Trigger
 if execute_btn:
-    if not base_file.exists() or not tuned_file.exists():
-        st.error("Weights safetensors files could not be found. Please verify the paths in the sidebar.")
-    else:
-        with st.spinner("Initializing streaming surgery engine and reading checkpoints..."):
-            engine = WeightSurgeryEngine(base_path=str(base_file), tuned_path=str(tuned_file))
-            telemetry = TelemetryLogger(mock_mode=mock_telemetry_toggle)
+    use_cloud_simulation = not base_file.exists() or not tuned_file.exists()
+    if use_cloud_simulation:
+        st.info("☁️ **Cloud Showcase Mode:** Checkpoint files are not stored on cloud containers. Generating real-time synthetic Gemma 4 layer telemetry.")
 
+    with st.spinner("Executing streaming surgery pipeline..."):
+        telemetry = TelemetryLogger(mock_mode=mock_telemetry_toggle)
+        results_list = []
+        t_start = time.perf_counter()
+
+        if not use_cloud_simulation:
+            engine = WeightSurgeryEngine(base_path=str(base_file), tuned_path=str(tuned_file))
             import safetensors
             with safetensors.safe_open(str(base_file), framework="numpy") as f_base:
                 all_keys = list(f_base.keys())
@@ -222,9 +226,6 @@ if execute_btn:
                 filtered_keys = filtered_keys[:limit_layers]
 
             progress_bar = st.progress(0, text="Streaming layer-wise surgery...")
-            results_list = []
-            t_start = time.perf_counter()
-
             for idx, res in enumerate(engine.stream_merge(lambda_val=lambda_val, target_keys=filtered_keys)):
                 results_list.append(res)
                 telemetry.log_layer_metric(
@@ -235,9 +236,51 @@ if execute_btn:
                     status=res.status,
                 )
                 progress_bar.progress((idx + 1) / len(filtered_keys), text=f"Processing [{idx + 1}/{len(filtered_keys)}]: {res.tensor_name}")
+        else:
+            # Generate synthetic Gemma 4 35-layer projection sequence
+            import numpy as np
+            synthetic_keys = []
+            for lyr in range(35):
+                for proj in ["self_attn.q_proj", "self_attn.v_proj", "mlp.gate_proj", "mlp.down_proj"]:
+                    if any(tf in proj for tf in target_filter):
+                        synthetic_keys.append(f"model.language_model.layers.{lyr}.{proj}.weight")
+            if limit_layers > 0:
+                synthetic_keys = synthetic_keys[:limit_layers]
 
-            t_elapsed = time.perf_counter() - t_start
-            flushed_sf = telemetry.flush_to_snowflake()
+            progress_bar = st.progress(0, text="Streaming synthetic Gemma 4 projection layers...")
+            for idx, key in enumerate(synthetic_keys):
+                time.sleep(0.01)
+                if collapse_mode:
+                    cos_val = max(0.25, min(0.84, 0.55 + float(np.sin(idx * 0.4) * 0.28)))
+                    frob_val = 95.0 + float(np.abs(np.cos(idx * 0.3) * 35.0))
+                else:
+                    cos_val = max(0.9995, 1.0 - (0.000003 * float(lambda_val)))
+                    frob_val = 0.0055 * max(0.1, float(lambda_val))
+
+                status_val = classify_status(cos_val)
+                shape_val = (3584, 14336) if "mlp" in key else (3584, 3584)
+                from engine.merger import LayerMergeResult
+                res = LayerMergeResult(
+                    tensor_name=key,
+                    lambda_val=lambda_val,
+                    cos_sim=cos_val,
+                    frob_drift=frob_val,
+                    status=status_val,
+                    shape=shape_val,
+                    dtype="bfloat16",
+                )
+                results_list.append(res)
+                telemetry.log_layer_metric(
+                    layer_name=res.tensor_name,
+                    alpha=res.lambda_val,
+                    frobenius_drift=res.frob_drift,
+                    cos_sim=res.cos_sim,
+                    status=res.status,
+                )
+                progress_bar.progress((idx + 1) / len(synthetic_keys), text=f"Processing [{idx + 1}/{len(synthetic_keys)}]: {res.tensor_name}")
+
+        t_elapsed = time.perf_counter() - t_start
+        flushed_sf = telemetry.flush_to_snowflake()
 
             # Store in session state
             st.session_state.last_results = results_list
