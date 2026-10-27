@@ -146,14 +146,18 @@ class TelemetryLogger:
                     self.snowflake_conn = snowflake.connector.connect(**auth_params)
                     init_cur = self.snowflake_conn.cursor()
                     wh_name = self.snowflake_config.get("warehouse", "SNOWFLAKE_LEARNING_WH")
+                    # Quote identifiers to prevent SQL injection
+                    db_quoted = self._quote_identifier(db_name)
+                    schema_quoted = self._quote_identifier(schema_name)
+                    wh_quoted = self._quote_identifier(wh_name)
                     try:
-                        init_cur.execute(f"USE WAREHOUSE {wh_name};")
+                        init_cur.execute(f"USE WAREHOUSE {wh_quoted};")
                     except Exception:
                         pass
-                    init_cur.execute(f"CREATE DATABASE IF NOT EXISTS {db_name};")
-                    init_cur.execute(f"CREATE SCHEMA IF NOT EXISTS {db_name}.{schema_name};")
+                    init_cur.execute(f"CREATE DATABASE IF NOT EXISTS {db_quoted};")
+                    init_cur.execute(f"CREATE SCHEMA IF NOT EXISTS {db_quoted}.{schema_quoted};")
                     init_cur.execute(f"""
-                        CREATE TABLE IF NOT EXISTS {db_name}.{schema_name}.LAYER_METRICS (
+                        CREATE TABLE IF NOT EXISTS {db_quoted}.{schema_quoted}.LAYER_METRICS (
                             LAYER_NAME VARCHAR,
                             ALPHA FLOAT,
                             FROBENIUS_DRIFT FLOAT,
@@ -162,8 +166,8 @@ class TelemetryLogger:
                             TIMESTAMP TIMESTAMP_NTZ
                         );
                     """)
-                    init_cur.execute(f"USE DATABASE {db_name};")
-                    init_cur.execute(f"USE SCHEMA {schema_name};")
+                    init_cur.execute(f"USE DATABASE {db_quoted};")
+                    init_cur.execute(f"USE SCHEMA {schema_quoted};")
                     init_cur.close()
 
                     self.is_snowflake_active = True
@@ -173,6 +177,16 @@ class TelemetryLogger:
                 self.is_snowflake_active = False
         else:
             self.is_snowflake_active = False
+
+    def _quote_identifier(self, identifier: str) -> str:
+        """Quote a Snowflake identifier to prevent SQL injection.
+        
+        Snowflake uses double quotes for identifiers. Any double quotes
+        within the identifier are escaped by doubling them.
+        """
+        # Escape any existing double quotes by doubling them
+        escaped = identifier.replace('"', '""')
+        return f'"{escaped}"'
 
     def _load_snowflake_env(self) -> Optional[Dict[str, Any]]:
         """Load Snowflake credentials from environment if available."""
@@ -250,8 +264,16 @@ class TelemetryLogger:
         record_count = len(pending_records)
 
         if self.is_snowflake_active and self.snowflake_conn is not None:
+            # Quote table name to prevent SQL injection
+            # Handle schema.table format (e.g., "M3O_ENGINE.TELEMETRY.LAYER_METRICS")
+            if "." in target_table:
+                parts = target_table.split(".")
+                quoted_table = ".".join(self._quote_identifier(p) for p in parts)
+            else:
+                quoted_table = self._quote_identifier(target_table)
+            
             query = f"""
-            INSERT INTO {target_table} (
+            INSERT INTO {quoted_table} (
                 LAYER_NAME,
                 ALPHA,
                 FROBENIUS_DRIFT,
