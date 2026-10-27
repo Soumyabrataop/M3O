@@ -41,6 +41,7 @@ from engine.merger import (
     STATUS_CRITICAL,
     classify_status,
 )
+from engine.stress_test import run_comprehensive_stress_test, run_simulated_collapse_test
 from telemetry.logger import TelemetryLogger
 
 # Page configuration
@@ -120,15 +121,15 @@ st.sidebar.title("⚡ M3O Controls")
 st.sidebar.markdown("**Mechanistic Model Surgery & Optimizer**")
 
 st.sidebar.subheader("Task Vector Scaling (λ / Alpha)")
-collapse_mode = st.sidebar.toggle(
-    "🚨 Collapse Stress Test Mode",
+stress_test_mode = st.sidebar.toggle(
+    "🧪 Comprehensive Stress Test",
     value=False,
-    help="Scales task vector perturbation to demonstrate DEGRADED and CRITICAL layer collapse across the network depth.",
+    help="Run stress test across multiple alpha values to find collapse boundaries",
 )
 
-if collapse_mode:
-    st.sidebar.error("⚠️ Stress Test Active (λ = 12,000.0). Demonstrating DEGRADED and CRITICAL layer collapse.")
-    lambda_val = 12000.0
+if stress_test_mode:
+    st.sidebar.info("🔬 Stress test will scan α from -1.0 to 10.0")
+    lambda_val = None  # Will be overridden by stress test
 else:
     lambda_preset = st.sidebar.selectbox(
         "Quick Presets",
@@ -261,89 +262,126 @@ if "last_summary" not in st.session_state:
     st.session_state.last_summary = None
 if "telemetry_records" not in st.session_state:
     st.session_state.telemetry_records = []
+if "stress_test_report" not in st.session_state:
+    st.session_state.stress_test_report = None
 
 # Execution Trigger
 if execute_btn:
-    # Determine if we have real weights to process
-    use_real_weights = has_uploaded_weights or has_local_weights
-    use_synthetic = upload_mode == "Synthetic Demo" or (not use_real_weights and upload_mode != "Synthetic Demo")
-    
-    if use_synthetic:
-        st.info("🎮 **Synthetic Demo Mode:** Generating simulated layer telemetry for demonstration.")
-    elif has_uploaded_weights:
-        st.info(f"📤 **Processing Uploaded Files:** Running weight surgery on uploaded safetensors.")
-    elif has_local_weights:
-        st.info(f"📁 **Processing Local Files:** Running weight surgery on local safetensors.")
-
-    with st.spinner("Executing streaming surgery pipeline..."):
-        telemetry = TelemetryLogger(mock_mode=mock_telemetry_toggle)
-        results_list = []
-        t_start = time.perf_counter()
-
-        if use_real_weights:
-            engine = WeightSurgeryEngine(base_path=str(base_file), tuned_path=str(tuned_file))
-            import safetensors
-            with safetensors.safe_open(str(base_file), framework="numpy") as f_base:
-                all_keys = list(f_base.keys())
-
-            # Apply target filters
-            filtered_keys = [k for k in all_keys if any(tf in k for tf in target_filter)]
-            if limit_layers > 0:
-                filtered_keys = filtered_keys[:limit_layers]
-
-            progress_bar = st.progress(0, text="Streaming layer-wise surgery...")
-            for idx, res in enumerate(engine.stream_merge(lambda_val=lambda_val, target_keys=filtered_keys)):
-                results_list.append(res)
-                telemetry.log_layer_metric(
-                    layer_name=res.tensor_name,
-                    alpha=res.lambda_val,
-                    frobenius_drift=res.frob_drift,
-                    cos_sim=res.cos_sim,
-                    status=res.status,
+    # Handle stress test mode
+    if stress_test_mode:
+        st.info("🔬 **Stress Test Mode:** Scanning multiple alpha values to find collapse boundaries.")
+        
+        with st.spinner("Running comprehensive stress test..."):
+            t_start = time.perf_counter()
+            
+            # Determine if we have real weights
+            use_real_weights = has_uploaded_weights or has_local_weights
+            
+            if use_real_weights:
+                report = run_comprehensive_stress_test(
+                    base_path=str(base_file),
+                    tuned_path=str(tuned_file),
+                    layer_limit=limit_layers if limit_layers > 0 else None,
+                    verbose=False,
                 )
-                progress_bar.progress((idx + 1) / len(filtered_keys), text=f"Processing [{idx + 1}/{len(filtered_keys)}]: {res.tensor_name}")
-        else:
-            # Generate synthetic Gemma 4 35-layer projection sequence
-            import numpy as np
-            synthetic_keys = []
-            for lyr in range(35):
-                for proj in ["self_attn.q_proj", "self_attn.v_proj", "mlp.gate_proj", "mlp.down_proj"]:
-                    if any(tf in proj for tf in target_filter):
-                        synthetic_keys.append(f"model.language_model.layers.{lyr}.{proj}.weight")
-            if limit_layers > 0:
-                synthetic_keys = synthetic_keys[:limit_layers]
+            else:
+                # Use simulated stress test
+                num_layers = limit_layers if limit_layers > 0 else 140
+                report = run_simulated_collapse_test(
+                    num_layers=num_layers,
+                    verbose=False,
+                )
+            
+            t_elapsed = time.perf_counter() - t_start
+            st.session_state.stress_test_report = report
+            st.session_state.last_summary = {
+                "lambda_val": report.optimal_alpha or 0.5,
+                "elapsed": t_elapsed,
+                "throughput": 0,
+                "total_layers": report.results[0].total_layers if report.results else 0,
+                "flushed_sf": 0,
+            }
+            st.success(f"Stress test completed! Tested {len(report.results)} alpha values in {t_elapsed:.2f}s")
+    
+    else:
+        # Normal single-alpha execution
+        # Determine if we have real weights to process
+        use_real_weights = has_uploaded_weights or has_local_weights
+        use_synthetic = upload_mode == "Synthetic Demo" or (not use_real_weights and upload_mode != "Synthetic Demo")
+        
+        if use_synthetic:
+            st.info("🎮 **Synthetic Demo Mode:** Generating simulated layer telemetry for demonstration.")
+        elif has_uploaded_weights:
+            st.info(f"📤 **Processing Uploaded Files:** Running weight surgery on uploaded safetensors.")
+        elif has_local_weights:
+            st.info(f"📁 **Processing Local Files:** Running weight surgery on local safetensors.")
 
-            progress_bar = st.progress(0, text="Streaming synthetic Gemma 4 projection layers...")
-            for idx, key in enumerate(synthetic_keys):
-                time.sleep(0.01)
-                if collapse_mode:
-                    cos_val = max(0.25, min(0.84, 0.55 + float(np.sin(idx * 0.4) * 0.28)))
-                    frob_val = 95.0 + float(np.abs(np.cos(idx * 0.3) * 35.0))
-                else:
+        with st.spinner("Executing streaming surgery pipeline..."):
+            telemetry = TelemetryLogger(mock_mode=mock_telemetry_toggle)
+            results_list = []
+            t_start = time.perf_counter()
+
+            if use_real_weights:
+                engine = WeightSurgeryEngine(base_path=str(base_file), tuned_path=str(tuned_file))
+                import safetensors
+                with safetensors.safe_open(str(base_file), framework="numpy") as f_base:
+                    all_keys = list(f_base.keys())
+
+                # Apply target filters
+                filtered_keys = [k for k in all_keys if any(tf in k for tf in target_filter)]
+                if limit_layers > 0:
+                    filtered_keys = filtered_keys[:limit_layers]
+
+                progress_bar = st.progress(0, text="Streaming layer-wise surgery...")
+                for idx, res in enumerate(engine.stream_merge(lambda_val=lambda_val, target_keys=filtered_keys)):
+                    results_list.append(res)
+                    telemetry.log_layer_metric(
+                        layer_name=res.tensor_name,
+                        alpha=res.lambda_val,
+                        frobenius_drift=res.frob_drift,
+                        cos_sim=res.cos_sim,
+                        status=res.status,
+                    )
+                    progress_bar.progress((idx + 1) / len(filtered_keys), text=f"Processing [{idx + 1}/{len(filtered_keys)}]: {res.tensor_name}")
+            else:
+                # Generate synthetic Gemma 4 35-layer projection sequence
+                import numpy as np
+                synthetic_keys = []
+                for lyr in range(35):
+                    for proj in ["self_attn.q_proj", "self_attn.v_proj", "mlp.gate_proj", "mlp.down_proj"]:
+                        if any(tf in proj for tf in target_filter):
+                            synthetic_keys.append(f"model.language_model.layers.{lyr}.{proj}.weight")
+                if limit_layers > 0:
+                    synthetic_keys = synthetic_keys[:limit_layers]
+
+                progress_bar = st.progress(0, text="Streaming synthetic Gemma 4 projection layers...")
+                for idx, key in enumerate(synthetic_keys):
+                    time.sleep(0.01)
+                    # Simulate realistic collapse behavior based on alpha
                     cos_val = max(0.9995, 1.0 - (0.000003 * float(lambda_val)))
                     frob_val = 0.0055 * max(0.1, float(lambda_val))
 
-                status_val = classify_status(cos_val)
-                shape_val = (3584, 14336) if "mlp" in key else (3584, 3584)
-                from engine.merger import LayerMergeResult
-                res = LayerMergeResult(
-                    tensor_name=key,
-                    lambda_val=lambda_val,
-                    cos_sim=cos_val,
-                    frob_drift=frob_val,
-                    status=status_val,
-                    shape=shape_val,
-                    dtype="bfloat16",
-                )
-                results_list.append(res)
-                telemetry.log_layer_metric(
-                    layer_name=res.tensor_name,
-                    alpha=res.lambda_val,
-                    frobenius_drift=res.frob_drift,
-                    cos_sim=res.cos_sim,
-                    status=res.status,
-                )
-                progress_bar.progress((idx + 1) / len(synthetic_keys), text=f"Processing [{idx + 1}/{len(synthetic_keys)}]: {res.tensor_name}")
+                    status_val = classify_status(cos_val)
+                    shape_val = (3584, 14336) if "mlp" in key else (3584, 3584)
+                    from engine.merger import LayerMergeResult
+                    res = LayerMergeResult(
+                        tensor_name=key,
+                        lambda_val=lambda_val,
+                        cos_sim=cos_val,
+                        frob_drift=frob_val,
+                        status=status_val,
+                        shape=shape_val,
+                        dtype="bfloat16",
+                    )
+                    results_list.append(res)
+                    telemetry.log_layer_metric(
+                        layer_name=res.tensor_name,
+                        alpha=res.lambda_val,
+                        frobenius_drift=res.frob_drift,
+                        cos_sim=res.cos_sim,
+                        status=res.status,
+                    )
+                    progress_bar.progress((idx + 1) / len(synthetic_keys), text=f"Processing [{idx + 1}/{len(synthetic_keys)}]: {res.tensor_name}")
 
         t_elapsed = time.perf_counter() - t_start
         flushed_sf = telemetry.flush_to_snowflake()
@@ -368,6 +406,76 @@ if execute_btn:
 # -----------------------------------------------------------------------------
 # Results Presentation
 # -----------------------------------------------------------------------------
+
+# Display stress test report if available
+if st.session_state.stress_test_report is not None:
+    report = st.session_state.stress_test_report
+    
+    st.markdown("---")
+    st.subheader("🧪 Stress Test Results")
+    
+    # Summary metrics
+    col1, col2, col3, col4 = st.columns(4)
+    with col1:
+        if report.collapse_threshold_degraded:
+            st.metric("First DEGRADED", f"α = {report.collapse_threshold_degraded:.2f}")
+        else:
+            st.metric("DEGRADED Threshold", "Not reached")
+    with col2:
+        if report.collapse_threshold_critical:
+            st.metric("First CRITICAL", f"α = {report.collapse_threshold_critical:.2f}")
+        else:
+            st.metric("CRITICAL Threshold", "Not reached")
+    with col3:
+        if report.optimal_alpha:
+            st.metric("Recommended α", f"{report.optimal_alpha:.2f}")
+        else:
+            st.metric("Optimal α", "N/A")
+    with col4:
+        st.metric("Alpha Values Tested", len(report.results))
+    
+    # Results table
+    stress_df = pd.DataFrame([{
+        "α": r.alpha,
+        "Status": r.status,
+        "Mean Cos Sim": r.mean_cos_sim,
+        "Min Cos Sim": r.min_cos_sim,
+        "Mean Frob Δ": r.mean_frob_drift,
+        "STABLE": r.stable_count,
+        "DEGRADED": r.degraded_count,
+        "CRITICAL": r.critical_count,
+    } for r in report.results])
+    
+    def highlight_status(val):
+        if val == "STABLE":
+            return "background-color: #00E676"
+        elif val == "DEGRADED":
+            return "background-color: #FFD600"
+        elif val == "CRITICAL":
+            return "background-color: #FF5252"
+        return ""
+    
+    st.dataframe(
+        stress_df.style.applymap(highlight_status, subset=["Status"]),
+        use_container_width=True,
+    )
+    
+    # Alpha vs Cosine Similarity chart
+    chart = alt.Chart(stress_df).mark_line(point=True).encode(
+        x=alt.X("α:Q", title="Alpha (λ)"),
+        y=alt.Y("Mean Cos Sim:Q", scale=alt.Scale(domain=[0.5, 1.02]), title="Mean Cosine Similarity"),
+        tooltip=["α", "Status", "Mean Cos Sim", "Min Cos Sim"],
+    )
+    
+    # Add threshold lines
+    rule_deg = alt.Chart(pd.DataFrame({"y": [0.85]})).mark_rule(color="#FFD600", strokeDash=[4, 4]).encode(y="y:Q")
+    rule_crit = alt.Chart(pd.DataFrame({"y": [0.65]})).mark_rule(color="#FF5252", strokeDash=[4, 4]).encode(y="y:Q")
+    
+    st.altair_chart((chart + rule_deg + rule_crit).properties(height=300), use_container_width=True)
+    st.caption("Yellow dashed = DEGRADED threshold (0.85). Red dashed = CRITICAL threshold (0.65).")
+    
+    st.markdown("---")
+
 if st.session_state.last_results is not None:
     results = st.session_state.last_results
     summary = st.session_state.last_summary
