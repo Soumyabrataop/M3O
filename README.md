@@ -87,23 +87,61 @@ pip install -r requirements.txt
 cp .env.example .env
 ```
 
-### 2. Live Terminal Surgery Cockpit
+### 2. Prepare Weights
+
+Place your safetensors weight files in the `weights/` directory:
+- `weights/model.safetensors` - Your tuned model weights
+- `weights/gemma4_base.safetensors` - Base reference weights
+
+You can generate synthetic base weights from your tuned weights:
+```bash
+python fixtures/generate_local_base.py
+```
+
+### 3. Live Terminal Surgery Cockpit
 
 ```powershell
-# Run stable streaming pass (Alpha = 0.5)
-python ui/cli.py --alpha 0.5 --limit 5
+# Basic usage with default alpha (0.7)
+python ui/cli.py
+
+# Run with custom alpha scaling
+python ui/cli.py --alpha 0.5 --limit 10
 
 # Demonstrate representation collapse detection
 python ui/cli.py --stress-test --limit 5
+
+# Run simulated collapse test (no weight files needed)
+python ui/cli.py --stress-simulate --limit 20
+
+# Save merged weights to file
+python ui/cli.py --alpha 0.5 --output ./weights/merged.safetensors
+
+# Use mock telemetry (no database connections)
+python ui/cli.py --mock --limit 5
 ```
 
-### 3. Interactive Web Dashboard
+#### CLI Flags
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--alpha` | 0.7 | Task vector scaling coefficient |
+| `--base` | `./weights/gemma4_base.safetensors` | Path to base reference weights |
+| `--tuned` | `./weights/model.safetensors` | Path to tuned weights |
+| `--output` | None | Output path to save merged weights |
+| `--limit` | None | Limit number of layers to process |
+| `--stress-test` | False | Run comprehensive stress test (tests α from -1.0 to 10.0 to find collapse boundaries) |
+| `--stress-simulate` | False | Run simulated collapse test (no weight files needed, demonstrates DEGRADED/CRITICAL behavior) |
+| `--mock` | False | Force mock telemetry mode (no DB connections) |
+| `--mongo` | None | MongoDB Atlas connection URI (overrides env) |
+| `--gemini-key` | None | Gemini API key for AI diagnostics (overrides env) |
+
+### 4. Interactive Web Dashboard
 
 ```powershell
 python -m streamlit run ui/dashboard.py
 ```
 
-### 4. Native Streamlit in Snowflake (SiS)
+### 5. Native Streamlit in Snowflake (SiS)
 
 Deploy `ui/snowflake_app.py` directly inside Snowflake Snowsight (Projects → Streamlit) pointing to `M3O_ENGINE.TELEMETRY.LAYER_METRICS`.
 
