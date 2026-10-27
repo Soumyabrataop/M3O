@@ -152,19 +152,71 @@ else:
     )
 
 st.sidebar.subheader("Weights Checkpoints")
-base_path_input = st.sidebar.text_input("Base Reference Weights", "./weights/gemma4_base.safetensors")
-tuned_path_input = st.sidebar.text_input("Tuned Weights", "./weights/model.safetensors")
 
-base_file = Path(base_path_input)
-tuned_file = Path(tuned_path_input)
+# File upload option
+upload_mode = st.sidebar.radio(
+    "Input Method",
+    ["Upload Files", "Local Path", "Synthetic Demo"],
+    help="Upload safetensors files, use local paths, or run with synthetic data"
+)
 
-has_local_weights = base_file.exists() and tuned_file.exists()
+base_file = None
+tuned_file = None
+has_uploaded_weights = False
+has_local_weights = False
 
-if has_local_weights:
-    st.sidebar.success(f"✓ Base ready ({base_file.stat().st_size / (1024**3):.2f} GB)")
-    st.sidebar.success(f"✓ Tuned ready ({tuned_file.stat().st_size / (1024**3):.2f} GB)")
-else:
-    st.sidebar.info("☁️ **Cloud Showcase Active**\n\nStreaming 140 in-memory Gemma 4 projection layers (no 10 GB download required).")
+if upload_mode == "Upload Files":
+    st.sidebar.markdown("**Upload Safetensors Files**")
+    base_upload = st.sidebar.file_uploader(
+        "Base Reference Weights",
+        type=["safetensors"],
+        key="base_upload",
+        help="Upload the base model weights (.safetensors)"
+    )
+    tuned_upload = st.sidebar.file_uploader(
+        "Tuned Weights",
+        type=["safetensors"],
+        key="tuned_upload",
+        help="Upload the fine-tuned model weights (.safetensors)"
+    )
+    
+    if base_upload and tuned_upload:
+        # Save uploaded files to temp directory
+        import tempfile
+        temp_dir = Path(tempfile.gettempdir()) / "m3o_uploads"
+        temp_dir.mkdir(exist_ok=True)
+        
+        base_file = temp_dir / f"base_{base_upload.name}"
+        tuned_file = temp_dir / f"tuned_{tuned_upload.name}"
+        
+        # Only write if files don't exist or are different size
+        if not base_file.exists() or base_file.stat().st_size != base_upload.size:
+            base_file.write_bytes(base_upload.getvalue())
+        if not tuned_file.exists() or tuned_file.stat().st_size != tuned_upload.size:
+            tuned_file.write_bytes(tuned_upload.getvalue())
+        
+        has_uploaded_weights = True
+        st.sidebar.success(f"✓ Base uploaded ({base_upload.size / (1024**3):.2f} GB)")
+        st.sidebar.success(f"✓ Tuned uploaded ({tuned_upload.size / (1024**3):.2f} GB)")
+    else:
+        st.sidebar.info("📤 Upload both weight files to begin")
+
+elif upload_mode == "Local Path":
+    base_path_input = st.sidebar.text_input("Base Reference Weights", "./weights/gemma4_base.safetensors")
+    tuned_path_input = st.sidebar.text_input("Tuned Weights", "./weights/model.safetensors")
+    
+    base_file = Path(base_path_input)
+    tuned_file = Path(tuned_path_input)
+    
+    if base_file.exists() and tuned_file.exists():
+        has_local_weights = True
+        st.sidebar.success(f"✓ Base ready ({base_file.stat().st_size / (1024**3):.2f} GB)")
+        st.sidebar.success(f"✓ Tuned ready ({tuned_file.stat().st_size / (1024**3):.2f} GB)")
+    else:
+        st.sidebar.warning("📁 Local weight files not found")
+
+else:  # Synthetic Demo
+    st.sidebar.info("🎮 **Synthetic Demo Mode**\n\nUsing simulated weight tensors for demonstration.")
 
 st.sidebar.subheader("Target Filters")
 target_filter = st.sidebar.multiselect(
@@ -212,16 +264,23 @@ if "telemetry_records" not in st.session_state:
 
 # Execution Trigger
 if execute_btn:
-    use_cloud_simulation = not base_file.exists() or not tuned_file.exists()
-    if use_cloud_simulation:
-        st.info("☁️ **Cloud Showcase Mode:** Checkpoint files are not stored on cloud containers. Generating real-time synthetic Gemma 4 layer telemetry.")
+    # Determine if we have real weights to process
+    use_real_weights = has_uploaded_weights or has_local_weights
+    use_synthetic = upload_mode == "Synthetic Demo" or (not use_real_weights and upload_mode != "Synthetic Demo")
+    
+    if use_synthetic:
+        st.info("🎮 **Synthetic Demo Mode:** Generating simulated layer telemetry for demonstration.")
+    elif has_uploaded_weights:
+        st.info(f"📤 **Processing Uploaded Files:** Running weight surgery on uploaded safetensors.")
+    elif has_local_weights:
+        st.info(f"📁 **Processing Local Files:** Running weight surgery on local safetensors.")
 
     with st.spinner("Executing streaming surgery pipeline..."):
         telemetry = TelemetryLogger(mock_mode=mock_telemetry_toggle)
         results_list = []
         t_start = time.perf_counter()
 
-        if not use_cloud_simulation:
+        if use_real_weights:
             engine = WeightSurgeryEngine(base_path=str(base_file), tuned_path=str(tuned_file))
             import safetensors
             with safetensors.safe_open(str(base_file), framework="numpy") as f_base:
