@@ -455,10 +455,13 @@ if st.session_state.stress_test_report is not None:
             return "background-color: #FF5252"
         return ""
     
-    st.dataframe(
-        stress_df.style.applymap(highlight_status, subset=["Status"]),
-        use_container_width=True,
-    )
+    # Use map instead of applymap for newer pandas versions
+    try:
+        styled_df = stress_df.style.map(highlight_status, subset=["Status"])
+    except AttributeError:
+        styled_df = stress_df.style.applymap(highlight_status, subset=["Status"])
+    
+    st.dataframe(styled_df, use_container_width=True)
     
     # Alpha vs Cosine Similarity chart
     chart = alt.Chart(stress_df).mark_line(point=True).encode(
