@@ -51,6 +51,7 @@ from engine.merger import (
     STATUS_CRITICAL,
     LayerMergeResult,
 )
+from engine.stress_test import run_comprehensive_stress_test, find_collapse_boundary, run_simulated_collapse_test
 from telemetry.logger import TelemetryLogger
 
 console = Console(highlight=False)
@@ -81,6 +82,133 @@ def create_cockpit_table(alpha: float) -> Table:
     return table
 
 
+def run_stress_test(
+    base: str,
+    tuned: str,
+    limit: Optional[int] = None,
+    verbose: bool = True,
+) -> int:
+    """
+    Run comprehensive stress test to find collapse boundaries and validate system.
+    """
+    base_file = Path(base)
+    tuned_file = Path(tuned)
+    
+    if not base_file.exists():
+        console.print(f"[bold red]Error:[/bold red] Base weights checkpoint not found: {base_file}")
+        return 1
+    if not tuned_file.exists():
+        console.print(f"[bold red]Error:[/bold red] Tuned weights checkpoint not found: {tuned_file}")
+        return 1
+    
+    console.print(Panel(
+        "[bold cyan]M3O Stress Test Mode[/bold cyan]\n"
+        "Testing multiple alpha values to find collapse boundaries\n"
+        "and validate numerical stability across the spectrum.",
+        box=box.ROUNDED,
+        border_style="cyan",
+    ))
+    
+    try:
+        report = run_comprehensive_stress_test(
+            base_path=str(base_file),
+            tuned_path=str(tuned_file),
+            layer_limit=limit,
+            verbose=verbose,
+        )
+    except Exception as e:
+        console.print(f"[bold red]Stress test failed:[/bold red] {e}")
+        return 1
+    
+    return _display_stress_test_report(report)
+
+
+def run_simulated_stress_test(
+    limit: int = 140,
+    verbose: bool = True,
+) -> int:
+    """
+    Run simulated stress test that demonstrates collapse behavior without weight files.
+    """
+    console.print(Panel(
+        "[bold cyan]M3O Simulated Collapse Test[/bold cyan]\n"
+        "Demonstrating DEGRADED and CRITICAL collapse behavior\n"
+        "with simulated task vector scenarios (no weight files needed).",
+        box=box.ROUNDED,
+        border_style="cyan",
+    ))
+    
+    try:
+        report = run_simulated_collapse_test(
+            num_layers=limit,
+            verbose=verbose,
+        )
+    except Exception as e:
+        console.print(f"[bold red]Simulated test failed:[/bold red] {e}")
+        return 1
+    
+    return _display_stress_test_report(report)
+
+
+def _display_stress_test_report(report) -> int:
+    """Display stress test report in a formatted table."""
+    # Display results table
+    results_table = Table(
+        title="[bold]Alpha Scan Results[/bold]",
+        box=box.ROUNDED,
+        header_style="bold cyan",
+    )
+    results_table.add_column("α", justify="right", style="white")
+    results_table.add_column("Status", justify="center")
+    results_table.add_column("Mean Cos Sim", justify="right")
+    results_table.add_column("Min Cos Sim", justify="right")
+    results_table.add_column("Mean Frob Δ", justify="right")
+    results_table.add_column("Breakdown", justify="center")
+    results_table.add_column("Throughput", justify="right")
+    
+    for r in report.results:
+        status_str = format_status_markup(r.status)
+        breakdown = f"[green]{r.stable_count}[/green]/[yellow]{r.degraded_count}[/yellow]/[red]{r.critical_count}[/red]"
+        results_table.add_row(
+            f"{r.alpha:+.2f}",
+            status_str,
+            f"{r.mean_cos_sim:.6f}",
+            f"{r.min_cos_sim:.6f}",
+            f"{r.mean_frob_drift:.6f}",
+            breakdown,
+            f"{r.throughput:.1f} lyr/s",
+        )
+    
+    console.print()
+    console.print(results_table)
+    
+    # Summary panel
+    summary = Table(show_header=False, box=box.SIMPLE)
+    summary.add_column("Finding", style="dim cyan")
+    summary.add_column("Value", style="bold white")
+    
+    if report.collapse_threshold_degraded:
+        summary.add_row("First DEGRADED at α", f"{report.collapse_threshold_degraded:.2f}")
+    else:
+        summary.add_row("DEGRADED threshold", "Not reached in test range")
+    
+    if report.collapse_threshold_critical:
+        summary.add_row("First CRITICAL at α", f"{report.collapse_threshold_critical:.2f}")
+    else:
+        summary.add_row("CRITICAL threshold", "Not reached in test range")
+    
+    if report.optimal_alpha:
+        summary.add_row("Recommended α", f"{report.optimal_alpha:.2f} (best stability)")
+    
+    if report.performance_baseline:
+        summary.add_row("Performance baseline", f"{report.performance_baseline:.1f} layers/sec")
+    
+    console.print()
+    console.print(Panel(summary, title="[bold green]Stress Test Findings[/bold green]", border_style="green"))
+    
+    return 0
+
+
 def run_cockpit(
     alpha: float = 0.7,
     mongo: Optional[str] = None,
@@ -89,14 +217,21 @@ def run_cockpit(
     limit: Optional[int] = None,
     output: Optional[str] = None,
     stress_test: bool = False,
+    stress_simulate: bool = False,
     gemini_key: Optional[str] = None,
+    mock_telemetry: bool = False,
 ) -> int:
     """
     Execute streaming surgery pipeline with live terminal cockpit rendering.
     """
-    # If stress test requested, scale alpha to simulate aggressive task vector perturbation
+    # Run simulated collapse test (no weight files needed)
+    if stress_simulate:
+        return run_simulated_stress_test(limit=limit or 140, verbose=True)
+    
+    # Run comprehensive stress test on real weights
     if stress_test:
-        alpha = 12000.0
+        return run_stress_test(base=base, tuned=tuned, limit=limit, verbose=True)
+    
     base_file = Path(base)
     tuned_file = Path(tuned)
 
@@ -114,7 +249,7 @@ def run_cockpit(
         console.print(f"[bold red]Engine Initialization Failed:[/bold red] {e}")
         return 1
 
-    telemetry = TelemetryLogger(mongo_uri=mongo)
+    telemetry = TelemetryLogger(mongo_uri=mongo, mock_mode=mock_telemetry)
 
     # Session Header Panel
     mongo_status = "[bold green]Online[/bold green]" if telemetry.is_mongo_active else "[yellow]Mock Mode[/yellow]"
@@ -255,7 +390,12 @@ def main():
     parser.add_argument(
         "--stress-test",
         action="store_true",
-        help="Simulate severe task vector drift to demonstrate DEGRADED and CRITICAL layer collapse",
+        help="Run comprehensive stress test across multiple alpha values to find collapse boundaries",
+    )
+    parser.add_argument(
+        "--stress-simulate",
+        action="store_true",
+        help="Run simulated collapse test (no weight files needed) to demonstrate DEGRADED/CRITICAL behavior",
     )
     parser.add_argument(
         "--gemini-key",
@@ -293,6 +433,12 @@ def main():
         default=None,
         help="Optional output path to save merged weights",
     )
+    parser.add_argument(
+        "--mock",
+        action="store_true",
+        dest="mock_telemetry",
+        help="Force mock telemetry mode (no database connections)",
+    )
 
     args = parser.parse_args()
     sys.exit(
@@ -304,7 +450,9 @@ def main():
             limit=args.limit,
             output=args.output,
             stress_test=args.stress_test,
+            stress_simulate=args.stress_simulate,
             gemini_key=args.gemini_key,
+            mock_telemetry=args.mock_telemetry,
         )
     )
 
